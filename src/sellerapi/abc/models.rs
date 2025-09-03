@@ -16,7 +16,7 @@ pub struct NewReview {
     pub id: String,
     pub product_id: String,
     pub author_name: String,
-    pub text: String,
+    pub content: String,
     pub score: f32,
     pub photos_amount: u16,
     pub videos_amount: u16,
@@ -27,4 +27,14 @@ pub struct NewReview {
 pub enum NewFeedback {
     Review(NewReview),
     Question(NewQuestion),
+}
+
+pub const WB_PLACE_SYMBOL: &str = "wb";
+pub const OZON_PLACE_SYMBOL: &str = "oz";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Product {
+    pub id: String,
+    pub place_symbol: &'static str,
+    pub name: String,
 }

@@ -143,13 +143,11 @@ impl WbSellerClient {
     pub async fn get_cards_list(
         &self,
         filter: Option<&models::params::Filter<'_>>,
-        limit: u32,
+        cursor: &models::params::CardListCursor,
     ) -> Result<models::CardsListResponse> {
         let payload = serde_json::to_vec(&json!({
             "settings": {
-                "cursor": {
-                    "limit": limit
-                },
+                "cursor": cursor,
                 "filter": filter.unwrap_or(&models::params::Filter {
                     with_photo: Some(-1),
                     ..Default::default()

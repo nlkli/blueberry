@@ -43,11 +43,11 @@ pub struct Filter<'a> {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Фильтр по параметру product_id. Вы можете передавать список значений.
-    pub product_id: Option<&'a [i64]>,
+    pub product_id: Option<&'a [&'a str]>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Идентификатор товара в системе Ozon — SKU.
-    pub sku: Option<&'a [i64]>,
+    pub sku: Option<&'a [&'a str]>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Фильтр по видимости товара
@@ -155,3 +155,9 @@ pub const REVIEW_MIN_LIMIT: usize = 20;
 
 /// Максимальное количество отзывов в ответе
 pub const REVIEW_MAX_LIMIT: usize = 100;
+
+/// Минимальное количество товаров в ответе
+pub const PRODUCT_LIST_MIN_LIMIT: usize = 1;
+
+/// Максимальное количество товаров в ответе
+pub const PRODUCT_LIST_MAX_LIMIT: usize = 1000;

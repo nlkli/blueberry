@@ -23,6 +23,21 @@ pub struct Filter<'a> {
     pub imt_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CardListCursor {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Сколько карточек товаров выдать в ответе
+    pub limit: Option<u32>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "updatedAt")]
+    /// Дата и время изменения
+    pub updated_at: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "imtID")]
+    /// Артикул WB, с которого надо запрашивать следующий список карточек товаров
+    pub nm_id: Option<i64>,
+}
+
 /// Для QuestionParams.state: none - вопрос отклонён продавцом (такой вопрос не отображается на портале покупателей)
 pub const REJECT_QUESTION_STATE: &str = "none";
 

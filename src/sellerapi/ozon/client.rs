@@ -1,7 +1,7 @@
 use super::models;
 use crate::error::Result;
 use reqwest::{IntoUrl, Method, header::HeaderMap};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{
     any::TypeId,
@@ -17,15 +17,21 @@ use thiserror::Error as ThisError;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const LIMIT_OF_REQUESTS_PER_SECOND: u32 = 42;
 
-#[derive(Debug, Deserialize, ThisError)]
-#[error("OzonSellerApiError: code: {code}, message: {message}, details: {details:?}.")]
+#[derive(Debug, Deserialize, Serialize, ThisError)]
+#[error("OzonSellerApiError: code: {}, message: {}, details: {:?}.", data.code, data.message, data.details)]
 pub struct OzonSellerApiError {
+    pub status_code: u16,
+    pub data: OzonSellerApiErrorData,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OzonSellerApiErrorData {
     pub code: i32,
     pub details: Vec<OzonSellerApiErrorDetail>,
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct OzonSellerApiErrorDetail {
     #[serde(rename = "typeUrl")]
     pub type_url: String,
@@ -129,10 +135,13 @@ impl OzonSellerClient {
                     Ok(response.json::<T>().await?)
                 }
             }
-            Err(e) => match response.json::<OzonSellerApiError>().await {
-                Ok(e) => Err(e.into()),
-                Err(_) => Err(e.into()),
-            },
+            Err(e) => {
+                let status_code = response.status().as_u16();
+                match response.json::<OzonSellerApiErrorData>().await {
+                    Ok(data) => Err(OzonSellerApiError { status_code, data }.into()),
+                    Err(_) => Err(e.into()),
+                }
+            }
         }
     }
 

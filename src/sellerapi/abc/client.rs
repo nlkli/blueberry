@@ -1,8 +1,10 @@
 use super::models::{DEFAULT_AUTHOR_NAME, NewQuestion, NewReview};
 use super::util::{format_rfc3339_to_unix_timestamp, unix_timestamp_to_rfc3339_format};
 use crate::error::Result;
-use crate::sellerapi::abcmodels::NewFeedback;
+use crate::sellerapi::abcmodels::{NewFeedback, OZON_PLACE_SYMBOL, Product, WB_PLACE_SYMBOL};
+use crate::sellerapi::ozmodels::params::PRODUCT_LIST_MAX_LIMIT;
 use crate::sellerapi::{OzonSellerClient, WbSellerClient, ozmodels, wbmodels};
+use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::usize;
 use std::{sync::Arc, time::Duration};
@@ -33,8 +35,135 @@ pub enum SellerClient {
 
 impl SellerClient {
     /// Возвращает цены и скидки на товар.
-    // pub async fn get_product_prices(&self) -> Result<u32> {
-    // }
+    pub fn all_products_stream(&self, chan: UnboundedSender<Result<Product>>) {
+        let seller = self.clone();
+
+        tokio::spawn(async move {
+            match seller {
+                Self::Ozon(cli) => {
+                    let limit = 20;
+                    let mut last_id: Option<String> = None;
+
+                    loop {
+                        let res = cli
+                            .get_product_list(
+                                Some(&ozmodels::params::Filter {
+                                    visibility: Some(ozmodels::params::Visibility::All),
+                                    ..Default::default()
+                                }),
+                                limit,
+                                last_id.as_deref(),
+                            )
+                            .await;
+
+                        if let Err(e) = res {
+                            let _ = chan.send(Err(e));
+                            return;
+                        }
+
+                        let mut res = unsafe { res.unwrap_unchecked() };
+
+                        if !res.result.last_id.is_empty() {
+                            last_id.insert(std::mem::take(&mut res.result.last_id));
+                        }
+
+                        let product_id_list = res
+                            .result
+                            .items
+                            .iter()
+                            .map(|i| i.product_id.to_string())
+                            .collect::<Vec<_>>();
+
+                        match cli
+                            .get_product_info_list(&ozmodels::params::Filter {
+                                product_id: Some(
+                                    &product_id_list
+                                        .iter()
+                                        .map(|s| s.as_str())
+                                        .collect::<Vec<_>>(),
+                                ),
+                                ..Default::default()
+                            })
+                            .await
+                        {
+                            Ok(res) => {
+                                for i in res.items {
+                                    let product = Product {
+                                        id: i.sku.to_string(),
+                                        place_symbol: OZON_PLACE_SYMBOL,
+                                        name: i.name,
+                                    };
+
+                                    if chan.send(Ok(product)).is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = chan.send(Err(e));
+                                return;
+                            }
+                        }
+
+                        if res.result.total < limit as u32 {
+                            return;
+                        }
+                    }
+                }
+                Self::Wb(cli) => {
+                    let mut limit = 80;
+
+                    let mut cursor = wbmodels::params::CardListCursor {
+                        limit: Some(limit),
+                        updated_at: None,
+                        nm_id: None,
+                    };
+
+                    loop {
+                        let res = cli
+                            .get_cards_list(
+                                Some(&wbmodels::params::Filter {
+                                    with_photo: Some(-1),
+                                    ..Default::default()
+                                }),
+                                &cursor,
+                            )
+                            .await;
+
+                        if let Err(e) = res {
+                            let _ = chan.send(Err(e));
+                            return;
+                        }
+
+                        let mut res = unsafe { res.unwrap_unchecked() };
+
+                        for (n, i) in res.cards.into_iter().enumerate() {
+                            if n as u32 == limit - 1 {
+                                break;
+                            }
+                            let product = Product {
+                                id: i.nm_id.to_string(),
+                                place_symbol: WB_PLACE_SYMBOL,
+                                name: i.title,
+                            };
+                            if chan.send(Ok(product)).is_err() {
+                                return;
+                            }
+                        }
+
+                        cursor.nm_id = Some(res.cursor.nm_id);
+                        cursor.updated_at = res.cursor.updated_at;
+
+                        if (res.cursor.total as u32) < limit {
+                            return;
+                        }
+
+                        tokio::time::sleep(Duration::from_millis(600)).await;
+                    }
+                }
+            };
+        });
+    }
 
     /// Ответить на вопрос. После ответа вопрос будет помечен как обработанный.
     /// Параметр product_id обязательный только для Ozon.
@@ -76,21 +205,21 @@ impl SellerClient {
         }
     }
 
-    /// Возвращает текущее количество вопросов на стороне маркетплейса.
-    pub async fn get_question_count(&self) -> Result<u32> {
-        match self {
-            Self::Ozon(cli) => Ok(cli.get_question_count().await?.all),
-            Self::Wb(cli) => cli.get_question_count(None, None, None).await,
-        }
-    }
+    // /// Возвращает текущее количество вопросов на стороне маркетплейса.
+    // pub async fn get_question_count(&self) -> Result<u32> {
+    //     match self {
+    //         Self::Ozon(cli) => Ok(cli.get_question_count().await?.all),
+    //         Self::Wb(cli) => cli.get_question_count(None, None, None).await,
+    //     }
+    // }
 
-    /// Возвращает текущее количество отзывов на стороне маркетплейса.
-    pub async fn get_review_count(&self) -> Result<u32> {
-        match self {
-            Self::Ozon(cli) => Ok(cli.get_review_count().await?.total),
-            Self::Wb(cli) => cli.get_review_count(None, None, None).await,
-        }
-    }
+    // /// Возвращает текущее количество отзывов на стороне маркетплейса.
+    // pub async fn get_review_count(&self) -> Result<u32> {
+    //     match self {
+    //         Self::Ozon(cli) => Ok(cli.get_review_count().await?.total),
+    //         Self::Wb(cli) => cli.get_review_count(None, None, None).await,
+    //     }
+    // }
 
     /// Вспомогательная функция: сортирует по `published_at` (по убыванию),
     /// фильтрует записи старше `date_from` и возвращает до `limit` элементов.
@@ -99,7 +228,7 @@ impl SellerClient {
         limit: usize,
         date_from: u64,
     ) -> Vec<NewQuestion> {
-        qs.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+        qs.sort_by(|a, b| a.published_at.cmp(&b.published_at));
         qs.into_iter()
             .filter(|q| q.published_at >= date_from)
             .take(limit)
@@ -108,7 +237,7 @@ impl SellerClient {
 
     /// Вспомогательная функция аналогично для отзывов.
     fn process_reviews(mut rs: Vec<NewReview>, limit: usize, date_from: u64) -> Vec<NewReview> {
-        rs.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+        rs.sort_by(|a, b| a.published_at.cmp(&b.published_at));
         rs.into_iter()
             .filter(|r| r.published_at >= date_from)
             .take(limit)
@@ -144,12 +273,14 @@ impl SellerClient {
                             published_at: format_rfc3339_to_unix_timestamp(&q.published_at),
                         })
                         .collect::<Vec<_>>();
+
                     Self::process_questions(mapped, limit as usize, date_from)
                 }),
             Self::Wb(cli) => {
                 let take = limit
                     .max(1)
                     .min(wbmodels::params::QUESTION_MAX_LIMIT as u32);
+
                 cli.get_question_list(&wbmodels::params::QuestionsAndReviewsFilter {
                     is_answered: false,
                     take,
@@ -170,6 +301,7 @@ impl SellerClient {
                             published_at: format_rfc3339_to_unix_timestamp(&q.created_date),
                         })
                         .collect::<Vec<_>>();
+
                     Self::process_questions(mapped, limit as usize, date_from)
                 })
             }
@@ -199,7 +331,7 @@ impl SellerClient {
                             id: r.id,
                             product_id: r.sku.to_string(),
                             author_name: DEFAULT_AUTHOR_NAME.to_string(),
-                            text: r.text,
+                            content: r.text,
                             score: r.rating as f32,
                             photos_amount: r.photos_amount as u16,
                             videos_amount: r.videos_amount as u16,
@@ -207,15 +339,11 @@ impl SellerClient {
                         })
                         .collect::<Vec<_>>();
 
-                    dbg!(&mapped);
-
                     Self::process_reviews(mapped, limit as usize, date_from)
                 })
             }
             Self::Wb(cli) => {
                 let take = limit.max(1).min(wbmodels::params::REVIEW_MAX_LIMIT as u32);
-
-                dbg!(take);
 
                 cli.get_review_list(&wbmodels::params::QuestionsAndReviewsFilter {
                     is_answered: false,
@@ -229,19 +357,33 @@ impl SellerClient {
                     let mapped = res
                         .reviews
                         .into_iter()
-                        .map(|r| NewReview {
-                            id: r.id,
-                            product_id: r.product_details.nm_id.to_string(),
-                            author_name: r.user_name,
-                            text: r.text,
-                            score: r.product_valuation as f32,
-                            photos_amount: r.photo_links.map(|v| v.len()).unwrap_or(0) as u16,
-                            videos_amount: r.video.map(|_| 1).unwrap_or(0) as u16,
-                            published_at: format_rfc3339_to_unix_timestamp(&r.created_date),
+                        .map(|r| {
+                            let mut content = "".to_string();
+
+                            if !r.pros.is_empty() {
+                                let _ = write!(&mut content, "Достоинства: {}\n", r.pros);
+                            }
+                            if !r.cons.is_empty() {
+                                let _ = write!(&mut content, "Недостатки: {}\n", r.cons);
+                            }
+                            if !r.text.is_empty() {
+                                let _ = write!(&mut content, "Комментарий: {}\n", r.text);
+                            }
+
+                            let content = content.trim().to_string();
+
+                            NewReview {
+                                id: r.id,
+                                product_id: r.product_details.nm_id.to_string(),
+                                author_name: r.user_name,
+                                content: content,
+                                score: r.product_valuation as f32,
+                                photos_amount: r.photo_links.map(|v| v.len()).unwrap_or(0) as u16,
+                                videos_amount: r.video.map(|_| 1).unwrap_or(0) as u16,
+                                published_at: format_rfc3339_to_unix_timestamp(&r.created_date),
+                            }
                         })
                         .collect::<Vec<_>>();
-
-                    dbg!(&mapped);
 
                     Self::process_reviews(mapped, limit as usize, date_from)
                 })
@@ -249,95 +391,83 @@ impl SellerClient {
         }
     }
 
-    /// Запускает наблюдатель, который шлёт разницу количества вопросов в канал.
-    /// Первый обнаруженный счётчик игнорируется (флаг `once`), далее — при изменении шлёт diff.
-    pub fn spawn_has_new_question_observer(
-        &self,
-        chan: UnboundedSender<Result<u32>>,
-        interval: Duration,
-    ) {
-        let seller = self.clone();
-        tokio::spawn(async move {
-            let mut question_count = 0u32;
-            let mut once = true;
-            loop {
-                match seller.get_question_count().await {
-                    Ok(count) => {
-                        if count != question_count {
-                            let diff = (count as i32 - question_count as i32).max(0) as u32;
-                            if diff == 0 {
-                                continue;
-                            }
+    // /// Запускает наблюдатель, который шлёт разницу количества вопросов в канал.
+    // /// Первый обнаруженный счётчик игнорируется (флаг `once`), далее — при изменении шлёт diff.
+    // pub fn spawn_has_new_question_observer(
+    //     &self,
+    //     chan: UnboundedSender<Result<u32>>,
+    //     interval: Duration,
+    // ) {
+    //     let seller = self.clone();
+    //     tokio::spawn(async move {
+    //         let mut question_count = 0u32;
+    //         let mut once = true;
+    //         loop {
+    //             match seller.get_question_count().await {
+    //                 Ok(count) => {
+    //                     if count != question_count {
+    //                         let diff = (count as i32 - question_count as i32).max(0) as u32;
+    //                         if diff == 0 {
+    //                             continue;
+    //                         }
+    //                         question_count = count;
+    //                         if once {
+    //                             once = !once;
+    //                         } else {
+    //                             if chan.send(Ok(diff)).is_err() {
+    //                                 return;
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 Err(e) => {
+    //                     let _ = chan.send(Err(e));
+    //                     return;
+    //                 }
+    //             }
+    //             tokio::time::sleep(interval).await;
+    //         }
+    //     });
+    // }
 
-                            dbg!(diff);
-
-                            question_count = count;
-                            dbg!(question_count);
-
-                            if once {
-                                once = !once;
-                            } else {
-                                println!("have new question");
-                                if chan.send(Ok(diff)).is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = chan.send(Err(e));
-                        return;
-                    }
-                }
-                tokio::time::sleep(interval).await;
-            }
-        });
-    }
-
-    /// Запускает наблюдатель, который шлёт разницу количества отзывов в канал.
-    /// Первый обнаруженный счётчик игнорируется (флаг `once`), далее — при изменении шлёт diff.
-    pub fn spawn_has_new_review_observer(
-        &self,
-        chan: UnboundedSender<Result<u32>>,
-        interval: Duration,
-    ) {
-        let seller = self.clone();
-        tokio::spawn(async move {
-            let mut review_count = 0u32;
-            let mut once = true;
-            loop {
-                match seller.get_review_count().await {
-                    Ok(count) => {
-                        if count != review_count {
-                            let diff = (count as i32 - review_count as i32).max(0) as u32;
-                            if diff == 0 {
-                                continue;
-                            }
-
-                            dbg!(diff);
-
-                            review_count = count;
-                            dbg!(review_count);
-
-                            if once {
-                                once = !once;
-                            } else {
-                                println!("have new review");
-                                if chan.send(Ok(diff)).is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = chan.send(Err(e));
-                        return;
-                    }
-                }
-                tokio::time::sleep(interval).await;
-            }
-        });
-    }
+    // /// Запускает наблюдатель, который шлёт разницу количества отзывов в канал.
+    // /// Первый обнаруженный счётчик игнорируется (флаг `once`), далее — при изменении шлёт diff.
+    // pub fn spawn_has_new_review_observer(
+    //     &self,
+    //     chan: UnboundedSender<Result<u32>>,
+    //     interval: Duration,
+    // ) {
+    //     let seller = self.clone();
+    //     tokio::spawn(async move {
+    //         let mut review_count = 0u32;
+    //         let mut once = true;
+    //         loop {
+    //             match seller.get_review_count().await {
+    //                 Ok(count) => {
+    //                     if count != review_count {
+    //                         let diff = (count as i32 - review_count as i32).max(0) as u32;
+    //                         if diff == 0 {
+    //                             continue;
+    //                         }
+    //                         review_count = count;
+    //                         if once {
+    //                             once = !once;
+    //                         } else {
+    //                             if chan.send(Ok(diff)).is_err() {
+    //                                 return;
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 Err(e) => {
+    //                     let _ = chan.send(Err(e));
+    //                     return;
+    //                 }
+    //             }
+    //             tokio::time::sleep(interval).await;
+    //         }
+    //     });
+    // }
 
     #[inline]
     /// Вспомогательная функция: берёт первые 8 байт id (если есть) и конвертирует в u64,
@@ -361,47 +491,30 @@ impl SellerClient {
         let seller = self.clone();
 
         tokio::spawn(async move {
-            let (tx, mut rx) = mpsc::unbounded_channel::<Result<_>>();
-
-            seller.spawn_has_new_question_observer(tx, interval);
-
             let mut unique_set = CircularArr::<_, 16>::new();
+            let mut date_from = 0u64;
+            let mut once = true;
 
-            while let Some(res) = rx.recv().await {
-                if let Err(e) = res {
-                    let _ = chan.send(Err(e));
-                    return;
-                }
-
-                let diff = res.unwrap().max(1);
-
-                match seller
-                    .get_last_new_questions(
-                        diff,
-                        (time::UtcDateTime::now().unix_timestamp() as u64) - interval.as_secs() * 2
-                            + 1,
-                    )
-                    .await
-                {
+            loop {
+                match seller.get_last_new_questions(20, date_from).await {
                     Ok(list) => {
-                        dbg!(&list);
+                        if once {
+                            once = !once;
+                            date_from = list.last().map_or(0, |q| q.published_at + 1);
+                            continue;
+                        }
 
                         for new_question in list {
-                            dbg!(&new_question);
-
                             let unique = Self::compute_unique_key(
                                 &new_question.id,
                                 new_question.published_at,
                             );
 
-                            dbg!(unique);
-
                             if unique_set.as_slise().contains(&unique) {
                                 continue;
                             }
 
-                            dbg!("try send");
-
+                            date_from = new_question.published_at - 1;
                             if chan.send(Ok(new_question)).is_err() {
                                 return;
                             }
@@ -414,8 +527,50 @@ impl SellerClient {
                         return;
                     }
                 }
+                tokio::time::sleep(interval).await;
             }
         });
+
+        //     while let Some(res) = rx.recv().await {
+        //         if let Err(e) = res {
+        //             let _ = chan.send(Err(e));
+        //             return;
+        //         }
+        //         let diff = res.unwrap().max(1);
+        //         match seller
+        //             .get_last_new_questions(
+        //                 diff,
+        //                 (time::UtcDateTime::now().unix_timestamp() as u64) - interval.as_secs() * 2
+        //                     + 1,
+        //             )
+        //             .await
+        //         {
+        //             Ok(list) => {
+        //                 dbg!(&list);
+        //                 for new_question in list {
+        //                     dbg!(&new_question);
+        //                     let unique = Self::compute_unique_key(
+        //                         &new_question.id,
+        //                         new_question.published_at,
+        //                     );
+        //                     dbg!(unique);
+        //                     if unique_set.as_slise().contains(&unique) {
+        //                         continue;
+        //                     }
+        //                     dbg!("try send");
+        //                     if chan.send(Ok(new_question)).is_err() {
+        //                         return;
+        //                     }
+        //                     unique_set.add(unique);
+        //                 }
+        //             }
+        //             Err(e) => {
+        //                 let _ = chan.send(Err(e));
+        //                 return;
+        //             }
+        //         }
+        //     }
+        // });
     }
 
     /// Запускает наблюдатель, который при появлении новых отзывов шлёт `NewReview` в канал.
@@ -427,70 +582,29 @@ impl SellerClient {
         let seller = self.clone();
 
         tokio::spawn(async move {
-            let (tx, mut rx) = mpsc::unbounded_channel::<Result<_>>();
-
-            seller.spawn_has_new_review_observer(tx, interval);
-
             let mut unique_set = CircularArr::<_, 16>::new();
+            let mut date_from = 0u64;
+            let mut once = true;
 
-            while let Some(res) = rx.recv().await {
-                if let Err(e) = res {
-                    let _ = chan.send(Err(e));
-                    return;
-                }
-
-                let diff = res.unwrap().max(1);
-
-                let seller_0 = seller.clone();
-
-                // Отложенный запрос
-                tokio::spawn(async move {
-                    let mut n = 0;
-                    loop {
-                        if let Ok(list) = seller_0
-                            .get_last_new_reviews(
-                                diff,
-                                (time::UtcDateTime::now().unix_timestamp() as u64) - 3600,
-                            )
-                            .await
-                        {
-                            println!("---- atempt: {}, data: {:?}", n, list);
-                            break;
-                        }
-                        println!("---- atempt: {}", n);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        if n == 60 {
-                            return;
-                        }
-                        n += 1;
-                    }
-                });
-
-                match seller
-                    .get_last_new_reviews(
-                        diff,
-                        (time::UtcDateTime::now().unix_timestamp() as u64) - 3600,
-                    )
-                    .await
-                {
+            loop {
+                match seller.get_last_new_reviews(20, date_from).await {
                     Ok(list) => {
-                        dbg!(&list);
+                        if once {
+                            once = !once;
+                            date_from = list.last().map_or(0, |q| q.published_at + 1);
+                            continue;
+                        }
 
-                        for new_review in list {
-                            dbg!(&new_review);
-
+                        for new_reviews in list {
                             let unique =
-                                Self::compute_unique_key(&new_review.id, new_review.published_at);
-
-                            dbg!(unique);
+                                Self::compute_unique_key(&new_reviews.id, new_reviews.published_at);
 
                             if unique_set.as_slise().contains(&unique) {
                                 continue;
                             }
 
-                            dbg!("try send");
-
-                            if chan.send(Ok(new_review)).is_err() {
+                            date_from = new_reviews.published_at - 1;
+                            if chan.send(Ok(new_reviews)).is_err() {
                                 return;
                             }
 
@@ -502,8 +616,48 @@ impl SellerClient {
                         return;
                     }
                 }
+                tokio::time::sleep(interval).await;
             }
         });
+
+        // tokio::spawn(async move {
+        //     let (tx, mut rx) = mpsc::unbounded_channel::<Result<_>>();
+        //     seller.spawn_has_new_review_observer(tx, interval);
+        //     let mut unique_set = CircularArr::<_, 16>::new();
+        //     while let Some(res) = rx.recv().await {
+        //         if let Err(e) = res {
+        //             let _ = chan.send(Err(e));
+        //             return;
+        //         }
+        //         let diff = res.unwrap().max(1);
+        //         let seller_0 = seller.clone();
+        //         match seller
+        //             .get_last_new_reviews(
+        //                 diff,
+        //                 (time::UtcDateTime::now().unix_timestamp() as u64) - 3600,
+        //             )
+        //             .await
+        //         {
+        //             Ok(list) => {
+        //                 for new_review in list {
+        //                     let unique =
+        //                         Self::compute_unique_key(&new_review.id, new_review.published_at);
+        //                     if unique_set.as_slise().contains(&unique) {
+        //                         continue;
+        //                     }
+        //                     if chan.send(Ok(new_review)).is_err() {
+        //                         return;
+        //                     }
+        //                     unique_set.add(unique);
+        //                 }
+        //             }
+        //             Err(e) => {
+        //                 let _ = chan.send(Err(e));
+        //                 return;
+        //             }
+        //         }
+        //     }
+        // });
     }
 
     /// Запускает наблюдатель, который при появлении новых вопросов или отзывов

@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    sellerapi::{OzonSellerClient, WbSellerClient, ozmodels, wbmodels},
+    sellerapi::{OzonSellerClient, SellerClient, WbSellerClient, ozmodels, wbmodels},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,22 +33,37 @@ pub struct ProductCtxData {
 
     /// Размер упаковки.
     pub r#box: String,
+
+    /// Название маркетплейса.
+    pub place: String,
 }
 
 impl ProductCtxData {
-    /// Формирует контекст товара по `nmid` из Wildberries.
-    pub async fn from_wb_product_nmid(cli: Arc<WbSellerClient>, nmid: i64) -> Result<Self> {
+    pub async fn new(cli: &SellerClient, product_id: &str) -> Result<Self> {
+        match cli {
+            SellerClient::Ozon(cli) => Self::from_ozon_product_sku(cli.clone(), product_id).await,
+            SellerClient::Wb(cli) => Self::from_wb_product_nmid(cli.clone(), product_id).await,
+        }
+    }
+
+    // Формирует контекст товара по `nmid` из Wildberries.
+    async fn from_wb_product_nmid(cli: Arc<WbSellerClient>, nmid: &str) -> Result<Self> {
         const UNKNOWN: &str = "Unknown";
 
-        let text_search = nmid.to_string();
         let filter = wbmodels::params::Filter {
             with_photo: Some(-1),
-            text_search: Some(&text_search),
+            text_search: Some(nmid),
             ..Default::default()
         };
 
         let cards_response = cli
-            .get_cards_list(Some(&filter), 1)
+            .get_cards_list(
+                Some(&filter),
+                &wbmodels::params::CardListCursor {
+                    limit: Some(1),
+                    ..Default::default()
+                },
+            )
             .await
             .map_err(|e| Error::ProductCtxData(format!("cards request failed: {e}")))?;
 
@@ -106,18 +121,27 @@ impl ProductCtxData {
             .unwrap_or_else(|| (UNKNOWN.to_string(), UNKNOWN.to_string()));
 
         let price = cli
-            .get_products_price(1, None, Some(nmid))
+            .get_products_price(1, None, nmid.parse().ok())
             .await
             .ok()
             .and_then(|r| r.data.list_goods.into_iter().next())
-            .and_then(|g| g.sizes.into_iter().next())
-            .map(|sp| sp.price.to_string())
+            .map(|g| {
+                (
+                    g.sizes
+                        .into_iter()
+                        .next()
+                        .map(|sp| sp.price.to_string())
+                        .unwrap_or_else(|| UNKNOWN.to_string()),
+                    g.currency_iso_code4217,
+                )
+            })
+            .map(|(p, c)| format!("{p} {c}"))
             .unwrap_or_else(|| UNKNOWN.to_string());
 
         let info = join_attrs_as_info(&attrs);
 
         Ok(Self {
-            id: text_search,
+            id: nmid.to_string(),
             name,
             price,
             desc,
@@ -125,11 +149,12 @@ impl ProductCtxData {
             attrs,
             weight,
             r#box,
+            place: "Wildberries".into(),
         })
     }
 
-    /// Формирует контекст товара по `sku` из Ozon.
-    pub async fn from_ozon_product_sku(cli: Arc<OzonSellerClient>, sku: i64) -> Result<Self> {
+    // Формирует контекст товара по `sku` из Ozon.
+    async fn from_ozon_product_sku(cli: Arc<OzonSellerClient>, sku: &str) -> Result<Self> {
         let tmp = [sku];
         let filter = ozmodels::params::Filter {
             sku: Some(&tmp[..]),
@@ -236,6 +261,7 @@ impl ProductCtxData {
             attrs,
             weight,
             r#box,
+            place: "Ozon".into(),
         })
     }
 

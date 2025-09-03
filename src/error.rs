@@ -1,5 +1,6 @@
 use crate::sellerapi::{OzonSellerApiError, WbSellerApiError};
 use reqwest::Error as ReqwestError;
+use rusqlite::Error as SqliteError;
 use std::io::Error as StdIoError;
 use std::result::Result as StdResult;
 use thiserror::Error as ThisError;
@@ -13,6 +14,9 @@ pub enum Error {
 
     #[error(transparent)]
     Reqwest(#[from] ReqwestError),
+
+    #[error(transparent)]
+    Sqlite(#[from] SqliteError),
 
     #[error(transparent)]
     OzonSellerApi(#[from] OzonSellerApiError),
