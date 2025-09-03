@@ -25,6 +25,25 @@ impl AiProvider {
         }
     }
 
+    /// Создает экземпляр AiProvider из переменных окружения.
+    ///
+    /// Переменные окружения:
+    /// - `AI_PROVIDER_BASE_URL` — базовый URL API провайдера.
+    /// - `AI_PROVIDER_API_KEY` — API ключ для доступа к API.
+    ///
+    /// # Паника
+    /// Метод вызовет `panic!`, если одна из переменных окружения не установлена.
+    pub fn from_env() -> Self {
+        let _ = dotenv::dotenv().ok(); // Загружаем .env, если он есть
+
+        let base_url = std::env::var("AI_PROVIDER_BASE_URL")
+            .expect("Переменная окружения AI_PROVIDER_BASE_URL не установлена");
+        let api_key = std::env::var("AI_PROVIDER_API_KEY")
+            .expect("Переменная окружения AI_PROVIDER_API_KEY не установлена");
+
+        Self::new(&base_url, &api_key)
+    }
+
     async fn call_api<T: DeserializeOwned, R: Serialize>(
         &self,
         method: Method,
