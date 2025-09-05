@@ -8,7 +8,8 @@ use thiserror::Error as ThisError;
 use tokio::sync::{/*Mutex,*/ Semaphore};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_RATE_LIMIT: usize = 4;
+const MAX_RATE_LIMIT: usize = 1;
+const RATE_LIMIT_DUR: Duration = Duration::from_millis(400);
 
 /// Универсальная ошибка обёртка для WB Seller API.
 #[derive(Debug, Deserialize, ThisError)]
@@ -70,15 +71,6 @@ impl WbSellerClient {
         Self::new(token)
     }
 
-    // /// Блокирует выполнение всех запросов.
-    // ///
-    // /// Пока возвращённый `OwnedMutexGuard` не будет дропнут,
-    // /// вызовы `call_api` будут ждать освобождения.
-    // /// Может использоватся для ожидания в случае ошибки 429.
-    // pub async fn block(&self) -> tokio::sync::OwnedMutexGuard<()> {
-    //     self.blocker.clone().lock_owned().await
-    // }
-
     #[inline]
     async fn call_api<T: DeserializeOwned + 'static>(
         &self,
@@ -86,12 +78,9 @@ impl WbSellerClient {
         url: &str,
         payload: Option<Vec<u8>>,
     ) -> Result<T> {
-        // let block_guard = self.blocker.lock().await;
-        // drop(block_guard);
-
         let _permit = self.sem.acquire().await.unwrap();
         if self.sem.available_permits() <= 1 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(RATE_LIMIT_DUR).await;
         }
 
         let mut headers = HeaderMap::new();

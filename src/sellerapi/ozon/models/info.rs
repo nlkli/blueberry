@@ -7,7 +7,7 @@ pub struct RatingSummaryResponse {
     pub groups: Vec<RatingGroup>,
 
     /// Данные по индексу локализации (если за 14 дней были продажи)
-    pub localization_index: Vec<LocalizationIndex>,
+    // pub localization_index: Vec<LocalizationIndex>, // TODO: может быть как массив так и объект
 
     /// Признак превышения баланса штрафных баллов
     pub penalty_score_exceeded: bool,
@@ -36,13 +36,13 @@ pub struct RatingItem {
     pub change: RatingChange,
 
     /// Текущее значение
-    pub current_value: i32,
+    pub current_value: f32,
 
     /// Название показателя
     pub name: String,
 
     /// Значение в прошлом периоде
-    pub past_value: i32,
+    pub past_value: f32,
 
     /// Уровень рейтинга (например, "A", "B")
     pub rating: String,
@@ -67,12 +67,12 @@ pub struct RatingChange {
     pub meaning: String,
 }
 
-/// Индекс локализации
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LocalizationIndex {
-    /// Дата расчёта индекса
-    pub calculation_date: String,
+// /// Индекс локализации
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct LocalizationIndex {
+//     /// Дата расчёта индекса
+//     pub calculation_date: String,
 
-    /// Значение индекса локализации
-    pub localization_percentage: i32,
-}
+//     /// Значение индекса локализации
+//     pub localization_percentage: i32,
+// }

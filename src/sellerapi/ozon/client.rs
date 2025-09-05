@@ -453,11 +453,7 @@ impl OzonSellerClient {
     }
 
     /// Получить информацию о текущих рейтингах продавца
-    pub async fn seller_rating_summary(
-        &self,
-        id: &str,
-        status: &models::params::SetQuestionStatus,
-    ) -> Result<()> {
+    pub async fn seller_rating_summary(&self) -> Result<models::RatingSummaryResponse> {
         let payload = "{}".as_bytes().to_vec();
 
         const URL: &str = "https://api-seller.ozon.ru/v1/rating/summary";

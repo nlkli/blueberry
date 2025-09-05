@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+pub const SYSTEM_ROLE: &str = "system";
+pub const USER_ROLE: &str = "system";
+pub const ASSISTANT_ROLE: &str = "system";
+
 /// Сообщение в диалоге с LLM
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Message {
@@ -11,6 +15,15 @@ pub struct Message {
 
     /// Текстовое содержимое сообщения
     pub content: String,
+}
+
+impl Message {
+    pub fn new_user_msg<T: Into<String>>(content: T) -> Self {
+        Self {
+            role: USER_ROLE.to_string(),
+            content: content.into(),
+        }
+    }
 }
 
 /// Запрос к модели генерации текста/чата

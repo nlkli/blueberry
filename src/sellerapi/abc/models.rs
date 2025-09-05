@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_AUTHOR_NAME: &str = "User";
@@ -16,7 +18,7 @@ pub struct NewReview {
     pub id: String,
     pub product_id: String,
     pub author_name: String,
-    pub content: String,
+    pub text: String,
     pub score: f32,
     pub photos_amount: u16,
     pub videos_amount: u16,
@@ -29,12 +31,19 @@ pub enum NewFeedback {
     Question(NewQuestion),
 }
 
-pub const WB_PLACE_SYMBOL: &str = "wb";
-pub const OZON_PLACE_SYMBOL: &str = "oz";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
     pub id: String,
-    pub place_symbol: &'static str,
     pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProductFormatInfo {
+    pub id: String,
+    pub name: String,
+    pub price: String,
+    pub desc: String,
+    pub attrs: BTreeMap<String, String>,
+    pub weight: String,
+    pub r#box: String,
 }
