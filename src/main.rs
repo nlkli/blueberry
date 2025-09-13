@@ -62,7 +62,7 @@ async fn product_ai_summary(scli: SellerClient, template_path: &str, ai_model: &
 
         println!("{n}. {product_ai_summary_id} ai_summary:");
 
-        let res = provider.just_send_prompt(&prompt, ai_model).await;
+        let res = provider.send_prompt(&prompt, ai_model).await;
 
         if let Err(e) = res {
             eprintln!("Ошибка обращения к AI провайдеру: {e}");
@@ -138,7 +138,7 @@ async fn run_feedback_observer(scli: SellerClient) {
                     let prompt = Tera::one_off(&q_template, &ctx, false).unwrap();
 
                     let mut chat_response = provider
-                        .just_send_prompt(&prompt, "deepseek/deepseek-r1-0528:free")
+                        .send_prompt(&prompt, "deepseek/deepseek-r1-0528:free")
                         .await
                         .unwrap();
 
@@ -155,6 +155,21 @@ async fn run_feedback_observer(scli: SellerClient) {
 }
 
 async fn test_question(scli: SellerClient) {
+    if let SellerClient::Ozon(ref cli) = scli {
+        if !cli
+            .seller_rating_summary()
+            .await
+            .map(|r| r.premium_plus)
+            .inspect_err(|e| eprintln!("Не удалось получить информацию о клиенте Ozon Seller: {e}"))
+            .unwrap_or_default()
+        {
+            println!(
+                "Методы работы с вопросами и отзывами доступны только для продавцов с подпиской Premium Plus."
+            );
+            return;
+        }
+    }
+
     let template = std::fs::read_to_string("templates/question.j2").unwrap();
 
     loop {
@@ -179,14 +194,15 @@ async fn test_question(scli: SellerClient) {
 
         let prompt = Tera::one_off(&template, &ctx, false).unwrap();
 
+        println!("Ожидание ответа AI провайдера...");
         let mut chat_response = genai::AiProvider::from_env()
-            .just_send_prompt(&prompt, "deepseek/deepseek-r1-0528:free")
+            .send_prompt(&prompt, "deepseek/deepseek-r1-0528:free")
             .await
             .unwrap();
 
         let answer = chat_response.take_message(0).unwrap().content;
 
-        println!("Answer to question:\n{}", answer);
+        println!("\nAnswer to question:\n{}", answer);
     }
 }
 

@@ -87,7 +87,7 @@ impl AiProvider {
         self.call_api(Method::POST, "/chat/completions", r).await
     }
 
-    pub async fn just_send_prompt(&self, prompt: &str, model: &str) -> Result<ChatResponse> {
+    pub async fn send_prompt(&self, prompt: &str, model: &str) -> Result<ChatResponse> {
         let payload = json!({
             "model": model,
             "messages": [
