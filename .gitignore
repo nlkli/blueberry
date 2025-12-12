@@ -5,3 +5,5 @@ frontend
 .db
 .env
 show_table.sh
+*.bac
+*.tmp
